@@ -1,0 +1,71 @@
+name: Infrastructure Deployment Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  quality-and-security:
+    name: "1-4. Checkout, SCA, SAST & Quality Gates"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Run tfsec SAST Scan
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          soft_fail: false
+
+  nonprod-s3-sync:
+    name: "5. Deploy Non-prod S3"
+    needs: quality-and-security
+    runs-on: ubuntu-latest
+    environment: non-production
+    defaults:
+      run:
+        working-directory: ./environments/non-prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (Non-prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::111111111111:role/GitHubActionsNonProdRole
+          aws-region: us-east-1
+
+      - name: Terraform Init & Apply
+        run: |
+          terraform init
+          terraform apply -auto-approve
+
+  prod-s3-sync:
+    name: "6-7. Approval Gate & Deploy Prod S3"
+    needs: nonprod-s3-sync
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    defaults:
+      run:
+        working-directory: ./environments/prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (Prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::222222222222:role/GitHubActionsProdRole
+          aws-region: us-east-1
+
+      - name: Terraform Init & Apply
+        run: |
+          terraform init
+          terraform apply -auto-approve
